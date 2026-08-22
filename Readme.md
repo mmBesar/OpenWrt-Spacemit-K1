@@ -26,6 +26,7 @@
 - [Which file do I flash?](#-which-file-do-i-flash)
 - [Installing](#-installing)
 - [First steps after flashing](#-first-steps-after-flashing)
+- [Adding packages](#-adding-packages)
 - [Known caveats](#-known-caveats)
 - [Disclaimer](#-disclaimer)
 
@@ -102,9 +103,10 @@ The boot ROM can only load the first-stage bootloader from SD, NOR, or eMMC's bo
 - [ ] Set a root password: `passwd`
 - [ ] Reach it from your PC by connecting **directly** (point-to-point, or an isolated VM bridge) — plugging straight into your existing LAN risks a second DHCP server fighting yours at `192.168.1.1`
 - [ ] Web UI: `luci` is baked into new builds; if using an older image, `apk update && apk add luci` (needs a working WAN first — see below)
-- [ ] Set up internet: convention is **`eth0` = WAN (DHCP client)**, **`eth1` = LAN**:
+- [ ] Set up internet: convention is **`eth0` = WAN (DHCP client)**, **`eth1` = LAN** — but confirm with `ip a` first, since naming isn't guaranteed on a target this new:
   ```sh
   # from a SECOND ssh session — keep your first one open in case of typos
+  ip a   # confirm eth0/eth1 actually match what's below before running anything
   uci del_list network.@device[0].ports='eth0'
   uci set network.wan=interface
   uci set network.wan.device='eth0'
@@ -113,6 +115,17 @@ The boot ROM can only load the first-stage bootloader from SD, NOR, or eMMC's bo
   /etc/init.d/network restart
   ```
   Then plug the uplink into `eth0`, connected to your **main router's LAN side** (not the ISP router directly). Verify from your original session before closing it.
+- [ ] Need a package not already in the image? See [Adding packages](#-adding-packages) below.
+
+## 📦 Adding packages
+
+The workflow's `.config` step includes only `luci` by default — its full dependency tree gets pulled in automatically (same resolution `apk` does live), so you don't need to list dependencies yourself. To add more, edit the `.config` block in `build-openwrt-spacemit-k1.yml`:
+
+```
+CONFIG_PACKAGE_<exact-name>=y
+```
+
+Find the exact name before a long build wastes your time: `apk search <keyword>` live on the board (same index the build uses), or browse `https://downloads.openwrt.org/snapshots/packages/riscv64_generic/`.
 
 ## ⚠️ Known caveats
 
@@ -120,6 +133,7 @@ The boot ROM can only load the first-stage bootloader from SD, NOR, or eMMC's bo
 |---|---|
 | R2S Ethernet (2.5GbE) | Uses upstream `kmod-r8169`, not vendor `r8125` — newer, less battle-tested than the SD boot path itself |
 | R2S SPI NOR | Some units may lack the chip entirely — eMMC-only bootloader target on those |
+| **RV2 onboard WiFi (AP6256)** | **Not enumerating at all** — `dmesg`/`/sys/class/mmc_host` show no SDIO host for it, meaning the devicetree doesn't expose it yet in this PR (matches OrangePi's own official images, which also reportedly lack working WiFi on RV2). No package fixes this — a USB WiFi dongle is the practical workaround for now |
 | Package manager | This target builds on `apk` (25.x+), not legacy `opkg` |
 | Reproducibility | PR #23231 is force-pushed regularly — pin a commit SHA via the `pin_commit` workflow input for a build you can reproduce later |
 
