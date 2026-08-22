@@ -68,6 +68,10 @@ jobs:
           CONFIG_TARGET_spacemit_k1=y
           CONFIG_TARGET_spacemit_k1_DEVICE_generic=y
           CONFIG_PACKAGE_luci=y
+          CONFIG_PACKAGE_parted=y
+          CONFIG_PACKAGE_losetup=y
+          CONFIG_PACKAGE_resize2fs=y
+          CONFIG_PACKAGE_blkid=y
           # --- Add any further CONFIG_PACKAGE_<name>=y lines below ---
           # Example:
           # CONFIG_PACKAGE_tcpdump=y
