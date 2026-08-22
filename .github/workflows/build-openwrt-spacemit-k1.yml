@@ -5,7 +5,8 @@
 # Save as .github/workflows/build-openwrt-spacemit-k1.yml in your own repo,
 # then trigger it manually from the Actions tab (workflow_dispatch).
 #
-# IMPORTANT: this PR is still being force-pushed (last update: 2026-06-13).
+# IMPORTANT: this PR is actively force-pushed by its author — check the PR
+# page itself for current status rather than trusting any date noted here.
 # By default this pulls the PR's current HEAD, which can change under you.
 # For a reproducible build, set `pin_commit` to a known-good commit SHA
 # from the PR instead (see input below).
