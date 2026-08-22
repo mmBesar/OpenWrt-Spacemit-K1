@@ -66,6 +66,13 @@ jobs:
           CONFIG_TARGET_spacemit=y
           CONFIG_TARGET_spacemit_k1=y
           CONFIG_TARGET_spacemit_k1_DEVICE_generic=y
+          CONFIG_PACKAGE_luci=y
+          # --- Add any further CONFIG_PACKAGE_<name>=y lines below ---
+          # Example:
+          # CONFIG_PACKAGE_tcpdump=y
+          # CONFIG_PACKAGE_htop=y
+          # Find exact names live once you have network: `apk search <term>`
+          # or browse https://downloads.openwrt.org/snapshots/packages/riscv64_generic/
           EOF
           make defconfig
 
