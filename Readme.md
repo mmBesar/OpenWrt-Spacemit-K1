@@ -65,7 +65,7 @@ One build run produces all of these — pick based on **how**, not **which board
 | `*-initramfs.itb` | RAM-only test boot over USB fastboot — nothing touches the board's storage. **R2S's only entry point**, since it has no SD slot. |
 | `u-boot-spacemit_k1.tar.gz` | Contains the bootloader plus `update-bootloader.sh` / `bootstrap.sh` helper scripts, needed for the eMMC/USB/fastboot paths. |
 
-## 💽 Installing
+## 💾 Installing
 
 <details>
 <summary><strong>Option A — SD card (RV2 only — start here if you have one)</strong></summary>
@@ -156,7 +156,7 @@ The rootfs partition uses this board profile's own default size (~230MB) — del
 > [!NOTE]
 > This script has **not** been end-to-end tested as a script on real hardware yet — only the equivalent manual steps have been, on an RV2 SD card. Review the disk/partition info it echoes carefully before typing `yes`.
 
-The script lives in this repo, not in the flashed image — pull it onto the board first (needs working WAN/internet already set up):
+The script lives in this repo, not in the flashed image — pull it onto the board first (needs working WAN/internet already set up). Swap `main` below if your repo's default branch is named differently:
 
 ```sh
 wget -O extend-storage.sh "https://raw.githubusercontent.com/mmBesar/OpenWrt-Spacemit-K1/main/scripts/extend-storage.sh"
