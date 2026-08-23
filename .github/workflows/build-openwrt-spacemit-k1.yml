@@ -72,6 +72,14 @@ jobs:
           CONFIG_PACKAGE_losetup=y
           CONFIG_PACKAGE_resize2fs=y
           CONFIG_PACKAGE_blkid=y
+          CONFIG_PACKAGE_block-mount=y
+          CONFIG_PACKAGE_kmod-fs-ext4=y
+          # Rootfs partition size (MiB), applies to sdcard/emmc/other images
+          # alike (single shared knob, not per-image-type). Set conservatively
+          # for R2S's ~8GB eMMC (real usable capacity typically ~7.3-7.4GiB on
+          # "8GB" chips) — verify against a real booted R2S and adjust if you
+          # find more headroom. Also fine for RV2's 32GB SD card as-is.
+          CONFIG_TARGET_ROOTFS_PARTSIZE=7000
           # --- Add any further CONFIG_PACKAGE_<name>=y lines below ---
           # Example:
           # CONFIG_PACKAGE_tcpdump=y
