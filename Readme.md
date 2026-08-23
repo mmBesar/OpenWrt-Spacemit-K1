@@ -181,6 +181,7 @@ then remove the two `/etc/uci-defaults/...` lines from `/etc/sysupgrade.conf` if
 | **Root expand + NVMe** | Confirmed open OpenWrt bug bricks NVMe installs after resize — see [Expanding storage](#-expanding-storage) |
 | **RV2 onboard WiFi (AP6256)** | **Not enumerating at all** — `dmesg`/`/sys/class/mmc_host` show no SDIO host for it, meaning the devicetree doesn't expose it yet in this PR (matches OrangePi's own official images, which also reportedly lack working WiFi on RV2). No package fixes this — a USB WiFi dongle is the practical workaround for now |
 | Package manager | This target builds on `apk` (25.x+), not legacy `opkg` |
+| **Live `apk add` for kmods/target packages** | Will always fail while unmerged — `downloads.openwrt.org` only publishes a target-specific package feed for merged targets, and this PR isn't one. Anything kernel/target-specific (`kmod-*`, `block-mount`, etc.) must be baked into the `.config` and rebuilt; only arch-generic userspace packages (like `luci`) install live |
 | Reproducibility | PR #23231 is force-pushed regularly — pin a commit SHA via the `pin_commit` workflow input for a build you can reproduce later |
 
 ## 🔒 Disclaimer
