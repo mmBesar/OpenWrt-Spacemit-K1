@@ -139,42 +139,76 @@ Find the exact name before a long build wastes your time: `apk search <keyword>`
 
 ## 💽 Expanding storage
 
-**Already solved for normal use.** This build's `.config` sets `CONFIG_TARGET_ROOTFS_PARTSIZE=7000` (MiB), which directly sizes the rootfs partition — and on this board's overlay design (an F2FS region living inside the same partition as the read-only erofs content), the writable overlay scales proportionally with it. Confirmed on a real flash: overlay went from ~228MB (default) to **6.8GB**, matching the config exactly. Nothing else to do — this is already in every image built from the current workflow.
+The rootfs partition uses this board profile's own default size (~230MB) — deliberately left as-is, so a single build stays safe on any storage size across the fleet, including smaller media in the future. Extending into free space is a **post-install, per-device step**, since how much free space exists depends entirely on the actual card/eMMC/USB drive in front of you, not something a build can know ahead of time.
+
+**Use extroot — this is OpenWrt's real, built-in mechanism, not a workaround.** It's read natively by OpenWrt's own boot process before anything else starts, using a genuine ext4 partition with full journaling. The confusing-looking `overlayfs:/overlay` line you'll see in `mtab` is simply how OpenWrt layers a writable filesystem over a read-only base *everywhere* — the same technique the tiny default setup already uses, nothing special or hacky about the bigger version.
 
 > [!NOTE]
-> This value is a single shared setting across `sdcard`/`emmc`/`other` images in one build run — it's set conservatively to fit R2S's real ~7.3GB eMMC ceiling (confirmed via `lsblk` on real hardware), since that's the tightest constraint across the fleet. RV2's much larger SD/eMMC capacity stays underused as a result — a limitation of the shared knob, not a bug. Splitting into separate per-board builds with different values is possible later if that ever matters.
-
-**The official OpenWrt resize script does NOT work on this board** — worth knowing so you don't retry it. It assumes a plain ext4 rootfs partition; this target's overlay is a loop-mounted region inside the same partition as the erofs content, which `parted resizepart` doesn't touch meaningfully. Confirmed not working on a real RV2 SD card.
-
-<details>
-<summary><strong>If you ever need MORE than the built-in ~7GB (extroot)</strong></summary>
-
-For using RV2's much larger eMMC/SD capacity, or a big NVMe/USB drive, beyond what the built-in partition size gives you — [OpenWrt's extroot](https://openwrt.org/docs/guide-user/additional-software/extroot_configuration) mounts a separate, bigger partition over `/overlay` instead of resizing the built-in one.
+> **The official `expand_root` resize script does NOT work on this board** and never will, regardless of any `.config` setting — this board's overlay lives inside the same partition as the read-only erofs content, which `parted resizepart` isn't built to handle. Use extroot below instead.
 
 > [!CAUTION]
-> **Do not attempt this on an NVMe install.** There's a confirmed, still-open OpenWrt bug where a similar resize/first-boot flow bricks NVMe installs with `failed to execute /usr/libexec/login` after reboot. Not confirmed against extroot specifically, but treat NVMe as unverified until tested.
+> **NVMe is unverified for this procedure.** There's a confirmed, still-open OpenWrt bug where a similar resize/first-boot flow bricks NVMe installs after reboot. Not confirmed against extroot specifically, but treat NVMe as untested until someone's actually done it.
 
-Tools needed (`block-mount`, `kmod-fs-ext4`, `e2fsprogs`, `parted`, `blkid`) are baked into new builds — **critically, these can never be installed live via `apk add`** while this target stays unmerged. `downloads.openwrt.org` doesn't publish a package feed for an unmerged PR's target, so any kernel/target-specific package (`kmod-*`, `block-mount`) fails with "no such package" no matter what — only arch-generic userspace packages (like `luci`) install live. If you're on an older image without these baked in, rebuild rather than trying to `apk add` your way out of it.
+### Automated (script)
 
-**On an SD card with existing partitions (not a blank disk):** never run `parted mklabel` — that wipes the *entire* partition table, including your OS. Only `mkpart` into the free space after your last existing partition. If `parted print` reports a corrupt/mismatched backup GPT, that's normal for any OS image written to bigger media than it was built for (same as Raspberry Pi OS, Armbian, etc.) — fix it interactively (`parted /dev/<disk>` → `print` → answer `Fix` to both prompts) before creating anything.
+[`scripts/extend-storage.sh`](scripts/extend-storage.sh) does the full procedure below automatically — detects your root disk, fixes a stale GPT if needed, creates one new partition in the free space, formats it, copies your existing config across, and configures `fstab`. It pauses for explicit confirmation before writing anything, and never touches existing partitions.
+
+> [!NOTE]
+> This script has **not** been end-to-end tested as a script on real hardware yet — only the equivalent manual steps have been, on an RV2 SD card. Review the disk/partition info it echoes carefully before typing `yes`.
+
+The script lives in this repo, not in the flashed image — pull it onto the board first (needs working WAN/internet already set up):
 
 ```sh
-apk update
-apk add block-mount kmod-fs-ext4 e2fsprogs
+wget -O extend-storage.sh "https://raw.githubusercontent.com/mmBesar/OpenWrt-Spacemit-K1/main/scripts/extend-storage.sh"
+chmod +x extend-storage.sh
+sh extend-storage.sh
+```
 
-# Find your disk's real layout first — never guess sector numbers
-parted -s /dev/<disk> unit s print
+Then, once it finishes:
+```sh
+reboot
+```
 
-# Create the new partition using free space AFTER your last existing
-# partition's end sector (substitute real numbers from print above)
+After reboot, verify:
+```sh
+grep -e /overlay /etc/mtab
+df -h /overlay /
+```
+You're looking for your new partition (not `loop0`) mounted at `/overlay`, sized close to your disk's actual free space.
+
+### Manual (step by step)
+
+If you'd rather do it by hand, or the script hits something it doesn't handle:
+
+Tools needed (`block-mount`, `kmod-fs-ext4`, `e2fsprogs`, `parted`, `blkid`) are baked into new builds. **These can never be installed live via `apk add`** while this target stays unmerged — `downloads.openwrt.org` doesn't publish a package feed for an unmerged PR's target, so any kernel/target-specific package fails with "no such package" regardless of retries. Only arch-generic userspace packages (like `luci`) install live. If you're on an older image without these baked in, rebuild rather than fighting `apk`.
+
+**Never run `parted mklabel`** on a disk with existing partitions — it wipes the *entire* table, including your OS. Only `mkpart` into free space after your last partition.
+
+If `parted print` reports a corrupt/mismatched backup GPT, that's normal for any OS image written to bigger media than it was built for (same as Raspberry Pi OS, Armbian, etc.) — fix it interactively first:
+```sh
 parted /dev/<disk>
-(parted) mkpart extroot ext4 <last_partition_end+1>s -1s
-(parted) print   # confirm it landed correctly before continuing
-(parted) quit
+(parted) print
+```
+Answer `OK` then `Fix` to the two prompts, then `quit`.
 
+Get your real layout before creating anything — never guess sector numbers:
+```sh
+parted -s /dev/<disk> unit s print
+```
+
+Create the partition using the real end-of-last-partition sector from that output:
+```sh
+parted /dev/<disk>
+(parted) unit s
+(parted) mkpart extroot ext4 <last_partition_end+1>s -1s
+(parted) print   # confirm it landed correctly, existing partitions untouched
+(parted) quit
+```
+
+Format and configure:
+```sh
 mkfs.ext4 -L extroot /dev/<disk>p<N>
 
-# Configure fstab to use the new partition as extroot
 eval $(block info /dev/<disk>p<N> | grep -o -e 'UUID="\S*"')
 eval $(block info | grep -o -e 'MOUNT="\S*/overlay"')
 echo "UUID=$UUID  MOUNT=$MOUNT"   # confirm both non-empty before continuing
@@ -185,22 +219,26 @@ uci set fstab.extroot.uuid="${UUID}"
 uci set fstab.extroot.target="${MOUNT}"
 uci commit fstab
 
-# Preserve access to the original (small) overlay too
 ORIG="$(block info | sed -n -e '/MOUNT="\S*\/overlay"/s/:\s.*$//p')"
 uci -q delete fstab.rwm
 uci set fstab.rwm="mount"
 uci set fstab.rwm.device="${ORIG}"
 uci set fstab.rwm.target="/rwm"
 uci commit fstab
-
-# Copy existing config across before switching over
-mount /dev/<disk>p<N> /mnt
-tar -C "${MOUNT}" -cvf - . | tar -C /mnt -xf -
-
-reboot
 ```
 
-</details>
+> [!IMPORTANT]
+> **Copy your existing config across before rebooting** — skipping this switches to a blank overlay and looks like a full reset (hostname, WAN config, everything back to defaults), even though nothing is actually lost as long as you haven't rebooted again since:
+> ```sh
+> mkdir -p /mnt/extroot-new
+> mount /dev/<disk>p<N> /mnt/extroot-new
+> tar -C "${MOUNT}" -cf - . | tar -C /mnt/extroot-new -xf -
+> umount /mnt/extroot-new
+> ```
+
+```sh
+reboot
+```
 
 ## ⚠️ Known caveats
 
