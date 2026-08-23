@@ -47,8 +47,8 @@ if [ -z "$ROOTDEV" ]; then
   exit 1
 fi
 case "$ROOTDEV" in
-  *mmcblk*p*) DISK=$(echo "$ROOTDEV" | sed -E 's/p[0-9]+$//') ;;
-  *[0-9])     DISK=$(echo "$ROOTDEV" | sed -E 's/[0-9]+$//') ;;
+  *mmcblk*p*) DISK=$(echo "$ROOTDEV" | sed 's/p[0-9]*$//') ;;
+  *[0-9])     DISK=$(echo "$ROOTDEV" | sed 's/[0-9]*$//') ;;
   *)          DISK="$ROOTDEV" ;;
 esac
 
@@ -60,7 +60,7 @@ echo ""
 #    written to bigger media than it was built for — non-destructive,
 #    uses the known-good primary table as the source of truth)
 parted -s "$DISK" ---pretend-input-tty print <<EOF
-Fix
+OK
 Fix
 EOF
 
