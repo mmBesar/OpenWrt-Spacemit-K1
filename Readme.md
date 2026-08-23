@@ -108,7 +108,7 @@ The boot ROM can only load the first-stage bootloader from SD, NOR, or eMMC's bo
 
 ## ✅ First steps after flashing
 
-- [ ] **SD boot** → `ssh root@192.168.1.1` (no password yet)
+- [ ] After first boot (either board) → `ssh root@192.168.1.1` (no password yet)
 - [ ] Set a root password: `passwd`
 - [ ] Reach it from your PC by connecting **directly** (point-to-point, or an isolated VM bridge) — plugging straight into your existing LAN risks a second DHCP server fighting yours at `192.168.1.1`
 - [ ] Web UI: `luci` is baked into new builds; if using an older image, `apk update && apk add luci` (needs a working WAN first — see below)
