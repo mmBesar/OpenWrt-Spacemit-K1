@@ -139,37 +139,68 @@ Find the exact name before a long build wastes your time: `apk search <keyword>`
 
 ## 💽 Expanding storage
 
-OpenWrt's default rootfs partition is a fixed ~100MB, regardless of your card/eMMC/USB drive's real size — the build doesn't know how big your storage will be ahead of time. This is a **manual, post-install step** — not baked into the image, deliberately, since it touches your live partition table and is worth doing with your eyes open rather than automatically on first boot.
+**Already solved for normal use.** This build's `.config` sets `CONFIG_TARGET_ROOTFS_PARTSIZE=7000` (MiB), which directly sizes the rootfs partition — and on this board's overlay design (an F2FS region living inside the same partition as the read-only erofs content), the writable overlay scales proportionally with it. Confirmed on a real flash: overlay went from ~228MB (default) to **6.8GB**, matching the config exactly. Nothing else to do — this is already in every image built from the current workflow.
+
+> [!NOTE]
+> This value is a single shared setting across `sdcard`/`emmc`/`other` images in one build run — it's set conservatively to fit R2S's real ~7.3GB eMMC ceiling (confirmed via `lsblk` on real hardware), since that's the tightest constraint across the fleet. RV2's much larger SD/eMMC capacity stays underused as a result — a limitation of the shared knob, not a bug. Splitting into separate per-board builds with different values is possible later if that ever matters.
+
+**The official OpenWrt resize script does NOT work on this board** — worth knowing so you don't retry it. It assumes a plain ext4 rootfs partition; this target's overlay is a loop-mounted region inside the same partition as the erofs content, which `parted resizepart` doesn't touch meaningfully. Confirmed not working on a real RV2 SD card.
+
+<details>
+<summary><strong>If you ever need MORE than the built-in ~7GB (extroot)</strong></summary>
+
+For using RV2's much larger eMMC/SD capacity, or a big NVMe/USB drive, beyond what the built-in partition size gives you — [OpenWrt's extroot](https://openwrt.org/docs/guide-user/additional-software/extroot_configuration) mounts a separate, bigger partition over `/overlay` instead of resizing the built-in one.
 
 > [!CAUTION]
-> **Do not run this on an NVMe install.** There's a confirmed, still-open OpenWrt bug where this exact script bricks NVMe installs with `failed to execute /usr/libexec/login` after the first reboot. If you're on `*-other.img.gz` via NVMe, skip this entirely for now.
+> **Do not attempt this on an NVMe install.** There's a confirmed, still-open OpenWrt bug where a similar resize/first-boot flow bricks NVMe installs with `failed to execute /usr/libexec/login` after reboot. Not confirmed against extroot specifically, but treat NVMe as unverified until tested.
 
-Tools (`parted`, `losetup`, `resize2fs`, `blkid`) are already baked into new builds. Once your WAN is up:
+Tools needed (`block-mount`, `kmod-fs-ext4`, `e2fsprogs`, `parted`, `blkid`) are baked into new builds — **critically, these can never be installed live via `apk add`** while this target stays unmerged. `downloads.openwrt.org` doesn't publish a package feed for an unmerged PR's target, so any kernel/target-specific package (`kmod-*`, `block-mount`) fails with "no such package" no matter what — only arch-generic userspace packages (like `luci`) install live. If you're on an older image without these baked in, rebuild rather than trying to `apk add` your way out of it.
+
+**On an SD card with existing partitions (not a blank disk):** never run `parted mklabel` — that wipes the *entire* partition table, including your OS. Only `mkpart` into the free space after your last existing partition. If `parted print` reports a corrupt/mismatched backup GPT, that's normal for any OS image written to bigger media than it was built for (same as Raspberry Pi OS, Armbian, etc.) — fix it interactively (`parted /dev/<disk>` → `print` → answer `Fix` to both prompts) before creating anything.
 
 ```sh
 apk update
-apk add parted losetup resize2fs blkid   # only needed on older images without these baked in
+apk add block-mount kmod-fs-ext4 e2fsprogs
 
-wget -U "" -O expand-root.sh "https://openwrt.org/_export/code/docs/guide-user/advanced/expand_root?codeblock=1"
-chmod +x expand-root.sh
+# Find your disk's real layout first — never guess sector numbers
+parted -s /dev/<disk> unit s print
 
-# Creates /etc/uci-defaults/70-rootpt-resize and 80-rootfs-resize, and
-# registers them in /etc/sysupgrade.conf so they survive a sysupgrade
-. ./expand-root.sh
+# Create the new partition using free space AFTER your last existing
+# partition's end sector (substitute real numbers from print above)
+parted /dev/<disk>
+(parted) mkpart extroot ext4 <last_partition_end+1>s -1s
+(parted) print   # confirm it landed correctly before continuing
+(parted) quit
 
-# Actually triggers it — resizes the partition, reboots, resizes the
-# filesystem, reboots again. Don't skip this step; sourcing the script
-# above only creates the scripts, it doesn't run them.
-sh /etc/uci-defaults/70-rootpt-resize
+mkfs.ext4 -L extroot /dev/<disk>p<N>
+
+# Configure fstab to use the new partition as extroot
+eval $(block info /dev/<disk>p<N> | grep -o -e 'UUID="\S*"')
+eval $(block info | grep -o -e 'MOUNT="\S*/overlay"')
+echo "UUID=$UUID  MOUNT=$MOUNT"   # confirm both non-empty before continuing
+
+uci -q delete fstab.extroot
+uci set fstab.extroot="mount"
+uci set fstab.extroot.uuid="${UUID}"
+uci set fstab.extroot.target="${MOUNT}"
+uci commit fstab
+
+# Preserve access to the original (small) overlay too
+ORIG="$(block info | sed -n -e '/MOUNT="\S*\/overlay"/s/:\s.*$//p')"
+uci -q delete fstab.rwm
+uci set fstab.rwm="mount"
+uci set fstab.rwm.device="${ORIG}"
+uci set fstab.rwm.target="/rwm"
+uci commit fstab
+
+# Copy existing config across before switching over
+mount /dev/<disk>p<N> /mnt
+tar -C "${MOUNT}" -cvf - . | tar -C /mnt -xf -
+
+reboot
 ```
 
-**If it doesn't seem to do anything** (reported on an RV2 SD card so far — cause not yet confirmed): check `parted /dev/mmcblk1 print` (substitute your actual root device from `lsblk`) to see whether the root partition is actually the *last* partition on the disk. `parted resizepart` can only grow a partition into trailing free space — if anything follows the root partition on this image's layout, that would explain a silent no-op. Also check `dmesg` right after running `70-rootpt-resize` for any error, and confirm the reboot it triggers actually happened rather than the session just dropping.
-
-**To re-run** after a failed or partial attempt:
-```sh
-rm -f /etc/rootpt-resize /etc/rootfs-resize
-```
-then remove the two `/etc/uci-defaults/...` lines from `/etc/sysupgrade.conf` if present, before retrying — otherwise the script assumes it already ran and does nothing.
+</details>
 
 ## ⚠️ Known caveats
 
