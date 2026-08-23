@@ -118,7 +118,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          name: "OpenWrt spacemit-k1 build ${{ steps.tag.outputs.tag }}"
+          name: "OpenWrt spacemit-k1 — ${{ steps.tag.outputs.tag }}"
           body: |
             Built from openwrt/openwrt PR #23231 (spacemit/k1 target, generic device).
             Same images boot both OrangePi R2S and OrangePi RV2 — u-boot auto-selects the DTB.
