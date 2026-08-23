@@ -138,14 +138,14 @@ echo ""
 
 # 7. Configure extroot, preserving access to the original overlay as a
 #    fallback (in case anything ever needs recovering from it directly)
-uci -q delete fstab.extroot
+uci -q delete fstab.extroot || true
 uci set fstab.extroot="mount"
 uci set fstab.extroot.uuid="${UUID}"
 uci set fstab.extroot.target="${MOUNT}"
 uci commit fstab
 
 ORIG="$(block info | sed -n -e '/MOUNT="\S*\/overlay"/s/:\s.*$//p')"
-uci -q delete fstab.rwm
+uci -q delete fstab.rwm || true
 uci set fstab.rwm="mount"
 uci set fstab.rwm.device="${ORIG}"
 uci set fstab.rwm.target="/rwm"
