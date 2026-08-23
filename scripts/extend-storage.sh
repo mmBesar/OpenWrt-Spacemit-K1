@@ -56,15 +56,9 @@ echo "Detected root partition: $ROOTDEV"
 echo "Detected disk:           $DISK"
 echo ""
 
-# 2. Fix a stale/corrupt backup GPT if present (normal for any OS image
-#    written to bigger media than it was built for — non-destructive,
-#    uses the known-good primary table as the source of truth)
-parted -s "$DISK" ---pretend-input-tty print <<EOF
-OK
-Fix
-EOF
-
-# 3. Find the end of the last existing partition
+# 2. Find the end of the last existing partition (works correctly even
+#    with a stale GPT — the existing partitions' own data is accurate
+#    regardless of the disk-size bookkeeping issue fixed in step 3)
 LASTLINE=$(parted -s "$DISK" unit s print | awk '/^ *[0-9]+/ {line=$0} END {print line}')
 LASTEND=$(echo "$LASTLINE" | awk '{gsub("s","",$3); print $3}')
 STARTSEC=$((LASTEND + 1))
@@ -87,8 +81,25 @@ printf "Type 'yes' to continue, anything else aborts: "
 read CONFIRM
 [ "$CONFIRM" = "yes" ] || { echo "Aborted — nothing changed."; exit 1; }
 
-# 4. Create and format the new partition
-parted -s "$DISK" unit s mkpart extroot ext4 "${STARTSEC}s" 100%
+# 3. Fix the stale/corrupt backup GPT AND create the new partition in ONE
+#    continuous session — the GPT fix only actually commits to disk when
+#    something in the SAME session performs a real write (like creating a
+#    partition); done as two separate parted invocations, the fix silently
+#    doesn't persist. This matches the exact sequence proven working live.
+#    The "Yes"/"Ignore" answers cover the rounding/alignment prompts seen
+#    live; if they don't occur this run, parted just reports them as
+#    unrecognized commands and continues harmlessly (nothing is written by
+#    an unrecognized command, so this is safe either way).
+parted "$DISK" ---pretend-input-tty <<EOF
+print
+OK
+Fix
+mkpart extroot ext4 ${STARTSEC}s 100%
+Yes
+Ignore
+print
+quit
+EOF
 sleep 1
 
 NEWNUM=$(parted -s "$DISK" print | awk '/extroot/ {print $1}')
