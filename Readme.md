@@ -145,6 +145,8 @@ Find the exact name before a long build wastes your time: `apk search <keyword>`
 
 The rootfs partition uses this board profile's own default size (~230MB) — deliberately left as-is, so a single build stays safe on any storage size across the fleet, including smaller media in the future. Extending into free space is a **post-install, per-device step**, since how much free space exists depends entirely on the actual card/eMMC/USB drive in front of you, not something a build can know ahead of time.
 
+The GPT-staleness issue below and the extroot approach aren't board- or media-specific — the same tiny image gets written to whatever storage you use, so this applies identically whether you're on RV2 or R2S, SD card, eMMC, USB, or NVMe.
+
 **Use extroot — this is OpenWrt's real, built-in mechanism, not a workaround.** It's read natively by OpenWrt's own boot process before anything else starts, using a genuine ext4 partition with full journaling. The confusing-looking `overlayfs:/overlay` line you'll see in `mtab` is simply how OpenWrt layers a writable filesystem over a read-only base *everywhere* — the same technique the tiny default setup already uses, nothing special or hacky about the bigger version.
 
 > [!NOTE]
@@ -158,7 +160,7 @@ The rootfs partition uses this board profile's own default size (~230MB) — del
 [`scripts/extend-storage.sh`](scripts/extend-storage.sh) does the full procedure below automatically — detects your root disk, fixes a stale GPT if needed, creates one new partition in the free space, formats it, copies your existing config across, and configures `fstab`. It pauses for explicit confirmation before writing anything, and never touches existing partitions.
 
 > [!NOTE]
-> This script has **not** been end-to-end tested as a script on real hardware yet — only the equivalent manual steps have been, on an RV2 SD card. Review the disk/partition info it echoes carefully before typing `yes`.
+> **Confirmed working end-to-end** (zero manual fixes needed) on a fresh RV2 SD card. The underlying mechanism isn't board- or media-specific, so it should work identically on eMMC/USB/NVMe and on the R2S — but those exact combinations haven't been separately tested yet. Treat a first run on any new board/media combo with the same care as any other first attempt.
 
 The script lives in this repo, not in the flashed image — pull it onto the board first (needs working WAN/internet already set up). Swap `main` below if your repo's default branch is named differently:
 
@@ -211,8 +213,10 @@ parted /dev/<disk>
 
 Format and configure:
 ```sh
-mkfs.ext4 -L extroot /dev/<disk>p<N>
-
+mkfs.ext4 -F -L extroot /dev/<disk>p<N>
+```
+`-F` matters here specifically: reflashing the small base image only overwrites the first ~268MB — anything you created further out on a previous attempt (like an earlier extroot partition) physically survives a reflash. Without `-F`, `mkfs` will stop and ask "proceed anyway?" if it finds old data at that offset.
+```sh
 eval $(block info /dev/<disk>p<N> | grep -o -e 'UUID="\S*"')
 eval $(block info | grep -o -e 'MOUNT="\S*/overlay"')
 echo "UUID=$UUID  MOUNT=$MOUNT"   # confirm both non-empty before continuing
@@ -252,6 +256,7 @@ reboot
 | **R2S has no SD card slot** | USB fastboot is the only entry point — see [Installing](#-installing) |
 | R2S SPI NOR | Some units may lack the chip entirely — eMMC-only bootloader target on those |
 | **Root expand + NVMe** | Confirmed open OpenWrt bug bricks NVMe installs after resize — see [Expanding storage](#-expanding-storage) |
+| **Reflashing doesn't wipe the whole card/drive** | Only the first ~268MB (partitions 1–5) gets overwritten — anything created further out on a previous attempt (e.g. an old extroot partition) physically survives a reflash. `extend-storage.sh` handles this (`mkfs -F`); doing it manually needs the same flag, see [Expanding storage](#-expanding-storage) |
 | **RV2 onboard WiFi (AP6256)** | **Not enumerating at all** — `dmesg`/`/sys/class/mmc_host` show no SDIO host for it, meaning the devicetree doesn't expose it yet in this PR (matches OrangePi's own official images, which also reportedly lack working WiFi on RV2). No package fixes this — a USB WiFi dongle is the practical workaround for now |
 | Package manager | This target builds on `apk` (25.x+), not legacy `opkg` |
 | **Live `apk add` for kmods/target packages** | Will always fail while unmerged — `downloads.openwrt.org` only publishes a target-specific package feed for merged targets, and this PR isn't one. Anything kernel/target-specific (`kmod-*`, `block-mount`, etc.) must be baked into the `.config` and rebuilt; only arch-generic userspace packages (like `luci`) install live |
