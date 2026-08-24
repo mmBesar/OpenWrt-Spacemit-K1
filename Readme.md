@@ -252,7 +252,8 @@ reboot
 
 | Area | Note |
 |---|---|
-| R2S Ethernet (2.5GbE) | Uses upstream `kmod-r8169`, not vendor `r8125` — newer, less battle-tested than the SD boot path itself |
+| R2S Ethernet (2.5GbE) | Uses upstream `kmod-r8169`, not vendor `r8125` — newer, less battle-tested than the SD boot path itself. Community testing (Aug 2026) found real NAT throughput tops out around ~1.8–2.0Gbps combined (not the full 2.5Gbps) due to no hardware offload on this chipset — CPU becomes the bottleneck |
+| **R2S runs hotter than RV2 — but not a clean comparison** | Community testers with matched images/workload confirmed real board-level heat differences. Personal testing here saw RV2 idle at ~38–40°C vs R2S at ~56–60°C on the same heatsink — but that's R2S running live production routing traffic on the OPi vendor image against an idle RV2 on this project's build, so workload and image both differ too; not isolated to a pure board difference. Community testing did find R2S throttles above ~65°C under load regardless — a heatsink is worth having either way |
 | **R2S has no SD card slot** | USB fastboot is the only entry point — see [Installing](#-installing) |
 | R2S SPI NOR | Some units may lack the chip entirely — eMMC-only bootloader target on those |
 | **Root expand + NVMe** | Confirmed open OpenWrt bug bricks NVMe installs after resize — see [Expanding storage](#-expanding-storage) |
