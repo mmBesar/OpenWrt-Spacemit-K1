@@ -30,7 +30,7 @@ set -e
 echo "=== extend-storage.sh ==="
 echo ""
 
-# 0. Sanity check required tools are present
+echo "[1/6] Checking required tools..."
 for tool in block parted mkfs.ext4; do
   command -v "$tool" >/dev/null 2>&1 || {
     echo "ERROR: '$tool' not found. This image doesn't have the needed" >&2
@@ -39,8 +39,10 @@ for tool in block parted mkfs.ext4; do
     exit 1
   }
 done
+echo "  OK — block, parted, mkfs.ext4 all present."
+echo ""
 
-# 1. Identify the root device (the disk backing /rom) and its base disk
+echo "[2/6] Detecting root disk..."
 ROOTDEV=$(block info | sed -n -e '/MOUNT="\/rom"/s/:.*//p')
 if [ -z "$ROOTDEV" ]; then
   echo "ERROR: could not detect root device automatically. Aborting." >&2
@@ -48,6 +50,7 @@ if [ -z "$ROOTDEV" ]; then
 fi
 case "$ROOTDEV" in
   *mmcblk*p*) DISK=$(echo "$ROOTDEV" | sed 's/p[0-9]*$//') ;;
+  *nvme*p*)   DISK=$(echo "$ROOTDEV" | sed 's/p[0-9]*$//') ;;
   *[0-9])     DISK=$(echo "$ROOTDEV" | sed 's/[0-9]*$//') ;;
   *)          DISK="$ROOTDEV" ;;
 esac
@@ -59,6 +62,7 @@ echo ""
 # 2. Find the end of the last existing partition (works correctly even
 #    with a stale GPT — the existing partitions' own data is accurate
 #    regardless of the disk-size bookkeeping issue fixed in step 3)
+echo "[3/6] Reading current partition layout..."
 LASTLINE=$(parted -s "$DISK" unit s print | awk '/^ *[0-9]+/ {line=$0} END {print line}')
 LASTEND=$(echo "$LASTLINE" | awk '{gsub("s","",$3); print $3}')
 STARTSEC=$((LASTEND + 1))
@@ -90,6 +94,7 @@ read CONFIRM
 #    live; if they don't occur this run, parted just reports them as
 #    unrecognized commands and continues harmlessly (nothing is written by
 #    an unrecognized command, so this is safe either way).
+echo "[4/6] Creating partition (fixing stale GPT sizing first if needed)..."
 parted "$DISK" ---pretend-input-tty <<EOF
 print
 OK
@@ -103,13 +108,26 @@ EOF
 sleep 1
 
 NEWNUM=$(parted -s "$DISK" print | awk '/extroot/ {print $1}')
+if [ -z "$NEWNUM" ]; then
+  echo "ERROR: could not find the newly created 'extroot' partition in" >&2
+  echo "'parted print' output. Stopping before mkfs — run" >&2
+  echo "'parted -s $DISK print' yourself to see what actually happened." >&2
+  exit 1
+fi
 case "$DISK" in
   *mmcblk*) NEWDEV="${DISK}p${NEWNUM}" ;;
+  *nvme*)   NEWDEV="${DISK}p${NEWNUM}" ;;
   *)        NEWDEV="${DISK}${NEWNUM}" ;;
 esac
 
 echo "New partition created: $NEWDEV"
-mkfs.ext4 -L extroot "$NEWDEV"
+echo ""
+echo "Formatting $NEWDEV as ext4 (-F: this card/drive may carry a filesystem"
+echo "signature left over from a previous attempt at the same disk offset —"
+echo "reflashing the small base image does NOT wipe space beyond ~268MB, so"
+echo "old test data can persist there across reflashes. You already confirmed"
+echo "'yes' above, so this proceeds without a second interactive prompt.)"
+mkfs.ext4 -F -L extroot "$NEWDEV"
 
 # 5. Detect the new partition's UUID and current overlay mount point
 eval "$(block info "$NEWDEV" | grep -o -e 'UUID="\S*"')"
@@ -126,18 +144,12 @@ echo "New partition UUID: $UUID"
 echo "Current overlay:     $MOUNT"
 echo ""
 
-# 6. THE STEP MISSED IN AN EARLIER MANUAL ATTEMPT — copy existing overlay
-#    data across BEFORE switching fstab over, so config isn't lost.
-echo "Copying current overlay contents to new partition..."
-mkdir -p /mnt/extroot-new
-mount "$NEWDEV" /mnt/extroot-new
-tar -C "${MOUNT}" -cf - . | tar -C /mnt/extroot-new -xf -
-umount /mnt/extroot-new
-echo "Copy complete."
-echo ""
-
-# 7. Configure extroot, preserving access to the original overlay as a
-#    fallback (in case anything ever needs recovering from it directly)
+# 6. Configure fstab BEFORE copying data — this must happen first so the
+#    copied snapshot includes the extroot config itself. Writing this
+#    while the OLD overlay is still active is correct: mount_root reads
+#    fstab from whichever overlay is active at boot time to decide
+#    whether to switch to extroot, so this has to land there now.
+echo "[5/6] Configuring fstab..."
 uci -q delete fstab.extroot || true
 uci set fstab.extroot="mount"
 uci set fstab.extroot.uuid="${UUID}"
@@ -150,11 +162,29 @@ uci set fstab.rwm="mount"
 uci set fstab.rwm.device="${ORIG}"
 uci set fstab.rwm.target="/rwm"
 uci commit fstab
+echo "  fstab.extroot and fstab.rwm both written."
+echo ""
 
-echo "=== Done ==="
-echo "fstab configured. Config copied. Reboot to switch over:"
+# 7. THE STEP MISSED IN AN EARLIER MANUAL ATTEMPT — copy existing overlay
+#    data across, NOW THAT fstab is already configured, so the copy
+#    includes the extroot config itself (not a pre-config snapshot).
+echo "[6/6] Copying current overlay config (including fstab) to new partition..."
+mkdir -p /mnt/extroot-new
+mount "$NEWDEV" /mnt/extroot-new
+tar -C "${MOUNT}" -cf - . | tar -C /mnt/extroot-new -xf -
+umount /mnt/extroot-new
+echo "Copy complete."
+echo ""
+
+echo "=================================================="
+echo " DONE — verify before rebooting:"
+echo "   uci show fstab"
+echo " Confirm fstab.extroot.uuid matches: $UUID"
+echo "=================================================="
+echo ""
+echo "Then reboot to switch over:"
 echo "  reboot"
 echo ""
-echo "After reboot, verify with:"
+echo "After reboot, verify the switch actually took effect:"
 echo "  grep -e /overlay /etc/mtab"
 echo "  df -h /overlay /"
