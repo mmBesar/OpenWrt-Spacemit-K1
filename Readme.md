@@ -113,6 +113,10 @@ The boot ROM can only load the first-stage bootloader from SD, NOR, or eMMC's bo
 - [ ] Reach it from your PC by connecting **directly** (point-to-point, or an isolated VM bridge) — plugging straight into your existing LAN risks a second DHCP server fighting yours at `192.168.1.1`
 - [ ] Web UI: `luci` is baked into new builds; if using an older image, `apk update && apk add luci` (needs a working WAN first — see below)
 - [ ] Set up internet: convention is **`eth0` = WAN (DHCP client)**, **`eth1` = LAN** — but confirm with `ip a` first, since naming isn't guaranteed on a target this new:
+
+  > [!WARNING]
+  > **Don't connect both `eth0` and `eth1` to the same switch before this is done.** While both ports are still bridged together as one LAN (the default state), plugging both into the same switch creates a physical loop through the board — this can trigger a broadcast storm and take down your *entire* network, not just the board. Keep the board's second port unplugged (or point-to-point only) until *after* the `uci` commands below have split `eth0` off as WAN.
+
   ```sh
   # from a SECOND ssh session — keep your first one open in case of typos
   ip a   # confirm eth0/eth1 actually match what's below before running anything
@@ -123,7 +127,7 @@ The boot ROM can only load the first-stage bootloader from SD, NOR, or eMMC's bo
   uci commit network && uci commit firewall
   /etc/init.d/network restart
   ```
-  Then plug the uplink into `eth0`, connected to your **main router's LAN side** (not the ISP router directly). Verify from your original session before closing it.
+  Only *after* that restart, plug the uplink into `eth0`, connected to your **main router's LAN side** (not the ISP router directly). Verify from your original session before closing it.
 - [ ] Need a package not already in the image? See [Adding packages](#-adding-packages) below.
 - [ ] Storage not using the full SD/eMMC/USB capacity? See [Expanding storage](#-expanding-storage) below.
 
