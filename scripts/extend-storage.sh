@@ -19,9 +19,12 @@
 #     of trying to `apk add` them — live installs of kernel/target-specific
 #     packages don't work on this unmerged target (see README).
 #
-# This has NOT been end-to-end tested on real hardware as a script (only
-# the equivalent manual steps have been, on an RV2 SD card). Review the
-# echoed disk/partition info carefully before typing "yes".
+# CONFIRMED working end-to-end (script form, zero manual intervention)
+# on a fresh RV2 SD card as of 2026-08-24. The underlying mechanism
+# (GPT-staleness fix, extroot) should apply identically to eMMC/USB/NVMe
+# and to the R2S, since it's not board- or media-specific — but those
+# exact combinations haven't been separately tested yet. Treat a first
+# run on any NEW board/media combo with the same care as before.
 #
 # Usage: sh extend-storage.sh
 
@@ -170,6 +173,7 @@ echo ""
 #    includes the extroot config itself (not a pre-config snapshot).
 echo "[6/6] Copying current overlay config (including fstab) to new partition..."
 mkdir -p /mnt/extroot-new
+umount /mnt/extroot-new 2>/dev/null || true   # clean up a stale mount if a previous run was interrupted here
 mount "$NEWDEV" /mnt/extroot-new
 tar -C "${MOUNT}" -cf - . | tar -C /mnt/extroot-new -xf -
 umount /mnt/extroot-new
