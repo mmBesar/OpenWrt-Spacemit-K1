@@ -33,7 +33,18 @@
 
 ## What this is
 
-This repo holds **no OpenWrt source** — just a GitHub Actions workflow that checks out PR #23231 fresh, cross-compiles it, and publishes the images as a GitHub Release each run. Both the R2S and RV2 are covered by the **same `generic` device image**: a multi-DTB FIT file that u-boot auto-matches to whichever board it's booted on, so there's nothing board-specific to pick at download time.
+This repo holds **no OpenWrt source** — just GitHub Actions workflows that check out PR #23231 fresh, cross-compile it, and publish the images as a GitHub Release each run. Both the R2S and RV2 are covered by the **same `generic` device image**: a multi-DTB FIT file that u-boot auto-matches to whichever board it's booted on, so there's nothing board-specific to pick at download time.
+
+### Two workflows, clearly separated
+
+| | `build-openwrt-spacemit-k1.yml` | `build-openwrt-spacemit-k1-wifi-patched.yml` |
+|---|---|---|
+| **Release tag prefix** | `build-...` | `wifi-patched-...` |
+| **Contents** | Exactly PR #23231 | PR #23231 + 3 experimental RV2 WiFi patches from [dgshue/OpenWrt-RISC](https://github.com/dgshue/OpenWrt-RISC) |
+| **Status** | Tested, working on real hardware | **Unverified** — patches may not apply cleanly against this tree (build fails loudly if so, never silently) |
+| **Use when** | Normal use, both boards | Testing RV2 onboard WiFi specifically |
+
+Both stay independently listed under Releases — the tag prefix alone tells you which is which at a glance.
 
 > [!IMPORTANT]
 > **R2S has no SD card slot** — it boots from USB only. RV2 has an SD slot. Pick your file/method per-board using the table below, not by copying the other board's steps.
@@ -258,7 +269,7 @@ reboot
 | R2S SPI NOR | Some units may lack the chip entirely — eMMC-only bootloader target on those |
 | **Root expand + NVMe** | Confirmed open OpenWrt bug bricks NVMe installs after resize — see [Expanding storage](#-expanding-storage) |
 | **Reflashing doesn't wipe the whole card/drive** | Only the first ~268MB (partitions 1–5) gets overwritten — anything created further out on a previous attempt (e.g. an old extroot partition) physically survives a reflash. `extend-storage.sh` handles this (`mkfs -F`); doing it manually needs the same flag, see [Expanding storage](#-expanding-storage) |
-| **RV2 onboard WiFi (AP6256)** | **Not enumerating at all** — `dmesg`/`/sys/class/mmc_host` show no SDIO host for it, meaning the devicetree doesn't expose it yet in this PR (matches OrangePi's own official images, which also reportedly lack working WiFi on RV2). No package fixes this — a USB WiFi dongle is the practical workaround for now |
+| **RV2 onboard WiFi (AP6256)** | **Not enumerating at all** in the clean build — the devicetree doesn't expose it in this PR (matches OrangePi's own official images, which also reportedly lack working WiFi on RV2). Try the `wifi-patched` workflow (experimental, unverified) or a USB WiFi dongle in the meantime |
 | Package manager | This target builds on `apk` (25.x+), not legacy `opkg` |
 | **Live `apk add` for kmods/target packages** | Will always fail while unmerged — `downloads.openwrt.org` only publishes a target-specific package feed for merged targets, and this PR isn't one. Anything kernel/target-specific (`kmod-*`, `block-mount`, etc.) must be baked into the `.config` and rebuilt; only arch-generic userspace packages (like `luci`) install live |
 | Reproducibility | PR #23231 is force-pushed regularly — pin a commit SHA via the `pin_commit` workflow input for a build you can reproduce later |
