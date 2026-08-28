@@ -85,7 +85,7 @@ jobs:
           echo "--- Fetched patches ---"
           ls -la target/linux/spacemit/patches-6.18/050*.patch
 
-      - name: Fetch AP6256 firmware + board NVRAM (source: dgshue/OpenWrt-RISC)
+      - name: Fetch AP6256 firmware + board NVRAM (source dgshue/OpenWrt-RISC)
         run: |
           mkdir -p files/lib/firmware/brcm
           for f in \
