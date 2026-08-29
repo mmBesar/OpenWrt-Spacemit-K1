@@ -85,9 +85,10 @@ jobs:
           echo "--- Fetched patches ---"
           ls -la target/linux/spacemit/patches-6.18/050*.patch
 
-      - name: Fetch AP6256 firmware + board NVRAM (source dgshue/OpenWrt-RISC)
+      - name: Create a dedicated firmware package for AP6256 (avoids apk ownership conflicts)
         run: |
-          mkdir -p files/lib/firmware/brcm
+          PKGDIR=package/firmware/brcmfmac-firmware-43456-sdio-rv2
+          mkdir -p "$PKGDIR/files"
           for f in \
             brcmfmac43456-sdio.bin \
             brcmfmac43456-sdio.clm_blob \
@@ -95,11 +96,50 @@ jobs:
             "brcmfmac43456-sdio.xunlong,orangepi-rv2.txt" \
             LICENSE.brcm80211
           do
-            curl -sL -o "files/lib/firmware/brcm/$f" \
+            curl -sL -o "$PKGDIR/files/$f" \
               "https://raw.githubusercontent.com/dgshue/OpenWrt-RISC/master/target/linux/spacemit/base-files/lib/firmware/brcm/$f"
           done
-          echo "--- Fetched firmware ---"
-          ls -la files/lib/firmware/brcm/
+          cat > "$PKGDIR/Makefile" << 'EOF'
+          include $(TOPDIR)/rules.mk
+
+          PKG_NAME:=brcmfmac-firmware-43456-sdio-rv2
+          PKG_VERSION:=1.0
+          PKG_RELEASE:=1
+
+          include $(INCLUDE_DIR)/package.mk
+
+          define Package/brcmfmac-firmware-43456-sdio-rv2
+            SECTION:=firmware
+            CATEGORY:=Firmware
+            TITLE:=Broadcom BCM43456 SDIO firmware (OrangePi RV2, AP6256)
+          endef
+
+          define Package/brcmfmac-firmware-43456-sdio-rv2/description
+            Firmware, CLM blob, and board-specific NVRAM for the AP6256
+            (BCM43456) WiFi module on the OrangePi RV2. EXPERIMENTAL, ported
+            from https://github.com/dgshue/OpenWrt-RISC for use with PR
+            #23231's spacemit/k1 target. Packaged separately (rather than via
+            a FILES= overlay) so file ownership is unambiguous to apk.
+          endef
+
+          define Build/Compile
+          endef
+
+          define Package/brcmfmac-firmware-43456-sdio-rv2/install
+          	$(INSTALL_DIR) $(1)/lib/firmware/brcm
+          	$(INSTALL_DATA) \
+          		./files/brcmfmac43456-sdio.bin \
+          		./files/brcmfmac43456-sdio.clm_blob \
+          		./files/brcmfmac43456-sdio.txt \
+          		"./files/brcmfmac43456-sdio.xunlong,orangepi-rv2.txt" \
+          		./files/LICENSE.brcm80211 \
+          		$(1)/lib/firmware/brcm/
+          endef
+
+          $(eval $(call BuildPackage,brcmfmac-firmware-43456-sdio-rv2))
+          EOF
+          echo "--- Package created ---"
+          find "$PKGDIR" -type f
       # --- end EXPERIMENTAL additions ---
 
       - name: Configure target (spacemit/k1, generic multi-board device)
@@ -120,12 +160,13 @@ jobs:
           CONFIG_PACKAGE_kmod-brcmfmac=y
           CONFIG_PACKAGE_wpad-openssl=y
           CONFIG_PACKAGE_iw=y
+          CONFIG_PACKAGE_brcmfmac-firmware-43456-sdio-rv2=y
           # --- Add any further CONFIG_PACKAGE_<name>=y lines below ---
           EOF
           make defconfig
 
       - name: Build
-        run: make -j$(nproc) V=s BUILD_LOG=1 FILES="$(pwd)/files"
+        run: make -j$(nproc) V=s BUILD_LOG=1
 
       - name: Upload firmware images
         if: always()
