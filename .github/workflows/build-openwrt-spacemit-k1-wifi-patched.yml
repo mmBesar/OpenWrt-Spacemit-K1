@@ -85,6 +85,15 @@ jobs:
           echo "--- Fetched patches ---"
           ls -la target/linux/spacemit/patches-6.18/050*.patch
 
+      - name: Fix sdhci1 initialization (disable by default to avoid pinctrl race)
+        run: |
+          # Change status from "okay" to "disabled" to prevent NULL pointer panic
+          # during deferred probe. Users can enable via device overlays later.
+          sed -i 's/+\tstatus = "okay";$/+\tstatus = "disabled";/' \
+            target/linux/spacemit/patches-6.18/0500-riscv-dts-k1-orangepi-rv2-enable-ap6256-sdio-wifi.patch
+          echo "--- Patch modified: sdhci1 now disabled by default ---"
+          tail -5 target/linux/spacemit/patches-6.18/0500-riscv-dts-k1-orangepi-rv2-enable-ap6256-sdio-wifi.patch
+
       - name: Create a dedicated firmware package for AP6256 (avoids apk ownership conflicts)
         run: |
           PKGDIR=package/firmware/brcmfmac-firmware-43456-sdio-rv2
