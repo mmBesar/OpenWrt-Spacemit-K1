@@ -1,0 +1,130 @@
+From: OpenWrt-Spacemit-K1 project
+Subject: [PATCH] riscv: dts: spacemit: enable AP6256 SDIO WiFi on OrangePi RV2
+
+Hand-adapted for dhewg/openwrt's spacemit PR #23231 tree, NOT dgshue's own
+devicetree backport. All hardware facts (pin numbers 15-20/mode 1, IRQ 100,
+GPIO 67 WL_REG_ON, GPIO 116 EXT_PWR_EN, CLK_SDH1/RESET_SDH1) originate from
+https://github.com/dgshue/OpenWrt-RISC's own reverse-engineering, but every
+insertion point and reference here was independently verified against
+dhewg's actual current tree (fetched + all 137 patches applied against the
+real pinned kernel 6.18.44 source) rather than reused from his file layout,
+which caused a real SD-card boot panic when grafted directly in an earlier
+attempt (mmc2 pin group belongs in k1-pinctrl.dtsi in this tree, not k1.dtsi
+as in dgshue's backport).
+
+Verified before use, not just written:
+  - dry-run and real patch apply against a fresh reconstruction of dhewg's
+    actual tree: clean, no fuzz, no rejects
+  - cpp preprocess: clean
+  - dtc compile to a real .dtb: clean, zero warnings (after adding
+    #address-cells/#size-cells to the wifi@1 parent node)
+  - CLK_SDH1 (12) / RESET_SDH1 (4) confirmed to exist in the real pinned
+    kernel's dt-bindings header, sitting exactly in the gap between the
+    existing SDH0 (11/3) and SDH2 (13/5) controllers
+  - pcie_vcc3v3 (vmmc) and buck3_1v8 (vqmmc) regulators, and GPIO 116,
+    confirmed to already exist by these exact names/numbers in dhewg's tree
+
+Still unverified: real hardware boot. Structural/reference correctness is
+confirmed; register-level/timing correctness on physical silicon is not.
+Must be paired with dgshue's patches 0005 (sdhci-of-k1 unaligned
+HOST_CONTROL2 panic fix) and 0006 (PMIC 32KOUT/RTC enable) — both apply
+cleanly as-is and are required for this SDIO slot to be safe/functional,
+not just present.
+
+diff -ruN dhewg_build/arch/riscv/boot/dts/spacemit/k1-orangepi-rv2.dts dhewg_build_modified/arch/riscv/boot/dts/spacemit/k1-orangepi-rv2.dts
+--- a/arch/riscv/boot/dts/spacemit/k1-orangepi-rv2.dts	2026-08-31 16:15:02.434717590 +0000
++++ b/arch/riscv/boot/dts/spacemit/k1-orangepi-rv2.dts	2026-09-01 05:55:23.663978670 +0000
+@@ -20,12 +20,18 @@
+ 		ethernet1 = &eth1;
+ 		mmc0 = &emmc;
+ 		mmc1 = &sdhci0;
++		mmc2 = &sdhci1;
+ 	};
+ 
+ 	chosen {
+ 		stdout-path = "serial0";
+ 	};
+ 
++	wifi_pwrseq: wifi-pwrseq {
++		compatible = "mmc-pwrseq-simple";
++		reset-gpios = <&gpio K1_GPIO(67) GPIO_ACTIVE_LOW>;
++	};
++
+ 	pcie_vcc3v3: regulator-pcie-vcc3v3 {
+ 		compatible = "regulator-fixed";
+ 		enable-active-high;
+@@ -417,3 +423,23 @@
+ 	sd-uhs-sdr104;
+ 	status = "okay";
+ };
++
++&sdhci1 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&mmc2_cfg>;
++	bus-width = <4>;
++	non-removable;
++	mmc-pwrseq = <&wifi_pwrseq>;
++	vmmc-supply = <&pcie_vcc3v3>;
++	vqmmc-supply = <&buck3_1v8>;
++	cap-sdio-irq;
++	keep-power-in-suspend;
++	#address-cells = <1>;
++	#size-cells = <0>;
++	status = "okay";
++
++	brcmf: wifi@1 {
++		compatible = "brcm,bcm4329-fmac";
++		reg = <1>;
++	};
++};
+diff -ruN dhewg_build/arch/riscv/boot/dts/spacemit/k1-pinctrl.dtsi dhewg_build_modified/arch/riscv/boot/dts/spacemit/k1-pinctrl.dtsi
+--- a/arch/riscv/boot/dts/spacemit/k1-pinctrl.dtsi	2026-08-31 16:15:02.406175349 +0000
++++ b/arch/riscv/boot/dts/spacemit/k1-pinctrl.dtsi	2026-08-31 22:15:08.749877769 +0000
+@@ -646,4 +646,24 @@
+ 			power-source = <1800>;
+ 		};
+ 	};
++
++	mmc2_cfg: mmc2-cfg {
++		mmc2-data-cmd-pins {
++			pinmux = <K1_PADCONF(15, 1)>,   /* mmc2_d3 */
++				 <K1_PADCONF(16, 1)>,   /* mmc2_d2 */
++				 <K1_PADCONF(17, 1)>,   /* mmc2_d1 */
++				 <K1_PADCONF(18, 1)>,   /* mmc2_d0 */
++				 <K1_PADCONF(19, 1)>;   /* mmc2_cmd */
++			bias-pull-up = <0>;
++			drive-strength = <32>;
++			power-source = <1800>;
++		};
++
++		mmc2-clk-pins {
++			pinmux = <K1_PADCONF(20, 1)>;   /* mmc2_clk */
++			bias-pull-up = <0>;
++			drive-strength = <32>;
++			power-source = <1800>;
++		};
++	};
+ };
+diff -ruN dhewg_build/arch/riscv/boot/dts/spacemit/k1.dtsi dhewg_build_modified/arch/riscv/boot/dts/spacemit/k1.dtsi
+--- a/arch/riscv/boot/dts/spacemit/k1.dtsi	2026-08-31 16:15:02.399587217 +0000
++++ b/arch/riscv/boot/dts/spacemit/k1.dtsi	2026-08-31 22:15:13.018218800 +0000
+@@ -1336,6 +1336,19 @@
+ 				status = "disabled";
+ 			};
+ 
++			sdhci1: mmc@d4280800 {
++				compatible = "spacemit,k1-sdhci";
++				reg = <0x0 0xd4280800 0x0 0x200>;
++				clocks = <&syscon_apmu CLK_SDH_AXI>,
++					 <&syscon_apmu CLK_SDH1>;
++				clock-names = "core", "io";
++				resets = <&syscon_apmu RESET_SDH_AXI>,
++					 <&syscon_apmu RESET_SDH1>;
++				reset-names = "axi", "sdh";
++				interrupts = <100>;
++				status = "disabled";
++			};
++
+ 			emmc: mmc@d4281000 {
+ 				compatible = "spacemit,k1-sdhci";
+ 				reg = <0x0 0xd4281000 0x0 0x200>;
