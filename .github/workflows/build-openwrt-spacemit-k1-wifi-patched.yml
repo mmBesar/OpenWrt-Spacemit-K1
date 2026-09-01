@@ -50,6 +50,11 @@ jobs:
           ref: refs/pull/23231/head
           fetch-depth: 0
 
+      - name: Checkout this repo too (for our own patch file)
+        uses: actions/checkout@v6
+        with:
+          path: this-repo
+
       - name: Pin to a specific commit (optional, for reproducibility)
         if: ${{ github.event.inputs.pin_commit != '' }}
         run: git checkout ${{ github.event.inputs.pin_commit }}
@@ -69,7 +74,7 @@ jobs:
 
       - name: Add our own hand-verified WiFi devicetree patch
         run: |
-          cp .github/patches/0500-rv2-wifi-devicetree-adapted.patch \
+          cp this-repo/.github/patches/0500-rv2-wifi-devicetree-adapted.patch \
             target/linux/spacemit/patches-6.18/
 
       - name: Fetch the two companion fixes (panic fix + PMIC clock) — apply cleanly as-is, board-agnostic
