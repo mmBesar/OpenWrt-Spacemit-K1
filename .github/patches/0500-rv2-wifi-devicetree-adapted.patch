@@ -1,39 +1,47 @@
 From: OpenWrt-Spacemit-K1 project
-Subject: [PATCH] riscv: dts: spacemit: enable AP6256 SDIO WiFi on OrangePi RV2
+Subject: [PATCH v2] riscv: dts: spacemit: enable AP6256 SDIO WiFi on OrangePi RV2
 
 Hand-adapted for dhewg/openwrt's spacemit PR #23231 tree, NOT dgshue's own
-devicetree backport. All hardware facts (pin numbers 15-20/mode 1, IRQ 100,
-GPIO 67 WL_REG_ON, GPIO 116 EXT_PWR_EN, CLK_SDH1/RESET_SDH1) originate from
-https://github.com/dgshue/OpenWrt-RISC's own reverse-engineering, but every
-insertion point and reference here was independently verified against
-dhewg's actual current tree (fetched + all 137 patches applied against the
-real pinned kernel 6.18.44 source) rather than reused from his file layout,
-which caused a real SD-card boot panic when grafted directly in an earlier
-attempt (mmc2 pin group belongs in k1-pinctrl.dtsi in this tree, not k1.dtsi
-as in dgshue's backport).
+devicetree backport. Hardware facts (pin numbers, IRQ 100, GPIO 67/116,
+CLK_SDH1/RESET_SDH1) originate from https://github.com/dgshue/OpenWrt-RISC's
+reverse-engineering; every insertion point and reference was independently
+verified against dhewg's actual current tree.
 
-Verified before use, not just written:
+v1 of this patch booted and crashed with a NULL pointer dereference in
+pinctrl_commit_state, during a deferred-probe retry of the new SDIO
+controller — traced to spacemit_sdhci_start_signal_voltage_switch
+unconditionally looking up a "uhs"-named pinctrl state that v1 never
+declared (only a single "default" state was given). Fixed in v2 by adding
+a second mmc2_uhs_cfg pin group and pinctrl-1, mirroring the exact pattern
+already working for this tree's own SD card slot (sdhci0). Also restored
+no-mmc/no-sd on the WiFi slot, present in dgshue's original but dropped in
+v1's adaptation.
+
+Cross-referenced against Armbian's own build config for this board
+(armbian/build, config/boards/orangepirv2.csc), which disables
+CONFIG_MMC_UHS_SUPPORT kernel-wide as "disable MMC UHS support to speed up
+MMC under Linux" — confirming UHS voltage-switching on this SoC is broadly
+fragile, not a one-off bug in this patch specifically. A kernel-wide
+disable was deliberately NOT copied here, since it would regress dhewg's
+SD card slot, which already has full working UHS support in the clean
+build. This fix is scoped to the WiFi slot only.
+
+Verified before use:
   - dry-run and real patch apply against a fresh reconstruction of dhewg's
-    actual tree: clean, no fuzz, no rejects
+    actual tree (all 137 of his patches applied against the real pinned
+    6.18.44 kernel source): clean, no fuzz, no rejects
   - cpp preprocess: clean
-  - dtc compile to a real .dtb: clean, zero warnings (after adding
-    #address-cells/#size-cells to the wifi@1 parent node)
-  - CLK_SDH1 (12) / RESET_SDH1 (4) confirmed to exist in the real pinned
-    kernel's dt-bindings header, sitting exactly in the gap between the
-    existing SDH0 (11/3) and SDH2 (13/5) controllers
-  - pcie_vcc3v3 (vmmc) and buck3_1v8 (vqmmc) regulators, and GPIO 116,
-    confirmed to already exist by these exact names/numbers in dhewg's tree
+  - dtc compile to a real .dtb: clean, zero warnings
 
-Still unverified: real hardware boot. Structural/reference correctness is
-confirmed; register-level/timing correctness on physical silicon is not.
-Must be paired with dgshue's patches 0005 (sdhci-of-k1 unaligned
-HOST_CONTROL2 panic fix) and 0006 (PMIC 32KOUT/RTC enable) — both apply
-cleanly as-is and are required for this SDIO slot to be safe/functional,
-not just present.
+Still unverified: real hardware boot with v2's fix applied. v1's specific
+crash is understood and addressed; this does not guarantee no further
+issues exist. Must be paired with dgshue's patches 0005 (sdhci-of-k1
+unaligned HOST_CONTROL2 panic fix) and 0006 (PMIC 32KOUT/RTC enable) — both
+apply cleanly as-is.
 
 diff -ruN dhewg_build/arch/riscv/boot/dts/spacemit/k1-orangepi-rv2.dts dhewg_build_modified/arch/riscv/boot/dts/spacemit/k1-orangepi-rv2.dts
 --- a/arch/riscv/boot/dts/spacemit/k1-orangepi-rv2.dts	2026-08-31 16:15:02.434717590 +0000
-+++ b/arch/riscv/boot/dts/spacemit/k1-orangepi-rv2.dts	2026-09-01 05:55:23.663978670 +0000
++++ b/arch/riscv/boot/dts/spacemit/k1-orangepi-rv2.dts	2026-09-01 22:33:16.686109625 +0000
 @@ -20,12 +20,18 @@
  		ethernet1 = &eth1;
  		mmc0 = &emmc;
@@ -53,39 +61,61 @@ diff -ruN dhewg_build/arch/riscv/boot/dts/spacemit/k1-orangepi-rv2.dts dhewg_bui
  	pcie_vcc3v3: regulator-pcie-vcc3v3 {
  		compatible = "regulator-fixed";
  		enable-active-high;
-@@ -417,3 +423,23 @@
+@@ -417,3 +423,25 @@
  	sd-uhs-sdr104;
  	status = "okay";
  };
 +
 +&sdhci1 {
-+	pinctrl-names = "default";
++	pinctrl-names = "default", "uhs";
 +	pinctrl-0 = <&mmc2_cfg>;
++	pinctrl-1 = <&mmc2_uhs_cfg>;
 +	bus-width = <4>;
 +	non-removable;
++	no-mmc;
++	no-sd;
 +	mmc-pwrseq = <&wifi_pwrseq>;
 +	vmmc-supply = <&pcie_vcc3v3>;
 +	vqmmc-supply = <&buck3_1v8>;
-+	cap-sdio-irq;
 +	keep-power-in-suspend;
 +	#address-cells = <1>;
 +	#size-cells = <0>;
 +	status = "okay";
 +
 +	brcmf: wifi@1 {
-+		compatible = "brcm,bcm4329-fmac";
++		compatible = "brcm,bcm43456-fmac", "brcm,bcm4329-fmac";
 +		reg = <1>;
 +	};
 +};
 diff -ruN dhewg_build/arch/riscv/boot/dts/spacemit/k1-pinctrl.dtsi dhewg_build_modified/arch/riscv/boot/dts/spacemit/k1-pinctrl.dtsi
 --- a/arch/riscv/boot/dts/spacemit/k1-pinctrl.dtsi	2026-08-31 16:15:02.406175349 +0000
-+++ b/arch/riscv/boot/dts/spacemit/k1-pinctrl.dtsi	2026-08-31 22:15:08.749877769 +0000
-@@ -646,4 +646,24 @@
++++ b/arch/riscv/boot/dts/spacemit/k1-pinctrl.dtsi	2026-09-01 22:33:07.982088214 +0000
+@@ -646,4 +646,44 @@
  			power-source = <1800>;
  		};
  	};
 +
 +	mmc2_cfg: mmc2-cfg {
++		mmc2-data-cmd-pins {
++			pinmux = <K1_PADCONF(15, 1)>,   /* mmc2_d3 */
++				 <K1_PADCONF(16, 1)>,   /* mmc2_d2 */
++				 <K1_PADCONF(17, 1)>,   /* mmc2_d1 */
++				 <K1_PADCONF(18, 1)>,   /* mmc2_d0 */
++				 <K1_PADCONF(19, 1)>;   /* mmc2_cmd */
++			bias-pull-up = <0>;
++			drive-strength = <32>;
++			power-source = <1800>;
++		};
++
++		mmc2-clk-pins {
++			pinmux = <K1_PADCONF(20, 1)>;   /* mmc2_clk */
++			bias-pull-up = <0>;
++			drive-strength = <32>;
++			power-source = <1800>;
++		};
++	};
++
++	mmc2_uhs_cfg: mmc2-uhs-cfg {
 +		mmc2-data-cmd-pins {
 +			pinmux = <K1_PADCONF(15, 1)>,   /* mmc2_d3 */
 +				 <K1_PADCONF(16, 1)>,   /* mmc2_d2 */
