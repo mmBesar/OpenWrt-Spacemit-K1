@@ -1,31 +1,23 @@
 # EXPERIMENTAL variant of build-openwrt-spacemit-k1.yml — adds RV2 onboard
-# WiFi (AP6256/BCM43456) support on top of the clean PR #23231 build, using
-# devicetree/kernel patches and firmware ported from a SEPARATE, independent
-# project: https://github.com/dgshue/OpenWrt-RISC (not affiliated with PR
-# #23231 — builds its own from-source target against OpenWrt main/6.18).
+# WiFi (AP6256/BCM43456) support on top of the clean PR #23231 build.
 #
-# UNVERIFIED: dgshue's patches are based on a devicetree backported from
-# mainline-master, which may not exactly match dhewg's PR tree. If the
-# patches don't apply cleanly, this build FAILS LOUDLY in the Actions log —
-# it cannot silently produce a broken image, since OpenWrt's patch system
-# (quilt) errors out immediately on any patch that doesn't apply.
+# SUPERSEDES an earlier version of this workflow that grafted
+# dgshue/OpenWrt-RISC's WiFi devicetree patch onto this tree directly.
+# That caused a REAL kernel panic on SD card boot — his patch was written
+# against his own devicetree backport, not dhewg's actual structure, and
+# the insertion landed in a structurally different place than intended.
 #
-# The three patches are coupled, not independently optional:
-#   - enables the AP6256 SDIO WiFi devicetree node
-#   - fixes a kernel panic that node's SDIO slot would otherwise trigger
-#     (a misaligned register access bug every other K1 board avoids by
-#     marking its slot no-sdio — this is the first slot to actually hit it)
-#   - enables the PMIC's 32kHz clock output the module needs (LPO)
-# All three are always fetched together; there's no reason to use fewer.
+# This version uses 0500-rv2-wifi-devicetree-adapted.patch instead — hand-
+# built against a real reconstruction of dhewg's current tree (all 137 of
+# his patches applied against the actual pinned kernel source), and
+# verified via a real dtc compile before ever being tried on hardware. See
+# that patch file's own header for the full verification trail. Only
+# dgshue's patches 0005 (SDIO panic fix) and 0006 (PMIC clock enable) are
+# still pulled from his repo directly — both apply cleanly as-is and don't
+# touch board-specific structure, so they don't carry the same risk 0004 did.
 #
-# FIXES in this build:
-#   - Adds deferred probe support: sdhci1 will retry probe if pinctrl not ready
-#   - Keeps WiFi enabled (status = "okay") so it probes at boot
-#   - Handles NULL pinctrl gracefully, avoiding the previous kernel panic
-#
-# See the "clean" workflow (build-openwrt-spacemit-k1.yml) for the base
-# build this forks from — same PR tracking, dependencies, and .config,
-# except for the additions below.
+# STILL UNVERIFIED: real hardware boot. Structural correctness is confirmed;
+# actual silicon behavior is not, until this has been tried on a board.
 
 name: Build OpenWrt spacemit-k1 (WiFi-patched, EXPERIMENTAL)
 
@@ -75,45 +67,18 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      # --- EXPERIMENTAL: RV2 WiFi additions (source: dgshue/OpenWrt-RISC) ---
-      - name: Fetch RV2 WiFi kernel/devicetree patches (EXPERIMENTAL, unverified against this tree)
+      - name: Add our own hand-verified WiFi devicetree patch
         run: |
-          mkdir -p target/linux/spacemit/patches-6.18
-          # Numbered 0500+ to apply after all of dhewg's own patches (which
-          # currently run up to ~0136), avoiding any sequence collision.
-          curl -sL -o target/linux/spacemit/patches-6.18/0500-riscv-dts-k1-orangepi-rv2-enable-ap6256-sdio-wifi.patch \
-            "https://raw.githubusercontent.com/dgshue/OpenWrt-RISC/master/target/linux/spacemit/patches-6.18/0004-riscv-dts-k1-orangepi-rv2-enable-ap6256-sdio-wifi.patch"
-          curl -sL -o target/linux/spacemit/patches-6.18/0501-mmc-sdhci-of-k1-fix-unaligned-HOST_CONTROL2-access.patch \
-            "https://raw.githubusercontent.com/dgshue/OpenWrt-RISC/master/target/linux/spacemit/patches-6.18/0005-mmc-sdhci-of-k1-fix-unaligned-HOST_CONTROL2-access.patch"
-          curl -sL -o target/linux/spacemit/patches-6.18/0502-rtc-spacemit-p1-enable-crystal-and-32KOUT.patch \
-            "https://raw.githubusercontent.com/dgshue/OpenWrt-RISC/master/target/linux/spacemit/patches-6.18/0006-rtc-spacemit-p1-enable-crystal-and-32KOUT.patch"
-          echo "--- Fetched patches ---"
-          ls -la target/linux/spacemit/patches-6.18/050*.patch
+          cp .github/patches/0500-rv2-wifi-devicetree-adapted.patch \
+            target/linux/spacemit/patches-6.18/
 
-      - name: Add kernel patch to handle sdhci1 pinctrl deferred probe
+      - name: Fetch the two companion fixes (panic fix + PMIC clock) — apply cleanly as-is, board-agnostic
         run: |
-          cat > target/linux/spacemit/patches-6.18/0503-sdhci-spacemit-handle-null-pinctrl-deferred-probe.patch << 'EOF'
-          --- a/drivers/mmc/host/sdhci-of-spacemit.c
-          +++ b/drivers/mmc/host/sdhci-of-spacemit.c
-          @@ -156,6 +156,16 @@ static int spacemit_sdhci_start_signal_voltage_switch(struct mmc_host *mmc)
-           	if (!host->pinctrl)
-           		return 0;
-           
-          +	/* Handle deferred probe if pinctrl not yet initialized
-          +	 * Some SDIO slots may probe before pinctrl system is ready
-          +	 * during early boot. Returning -EPROBE_DEFER will retry later.
-          +	 * This prevents NULL pointer dereference on sdhci1 (WiFi slot).
-          +	 */
-          +	if (!host->pins || !host->pins_default) {
-          +		dev_dbg(&mmc->class_dev, "pinctrl pins not ready, deferring probe");
-          +		return -EPROBE_DEFER;
-          +	}
-          +
-           	if (mmc->supply.vqmmc)
-           		mmc_regulator_set_vqmmc(mmc, mmc->ios);
-           
-          EOF
-          echo "--- Patch added to handle deferred probe ---"
+          curl -sL -f -o target/linux/spacemit/patches-6.18/0501-mmc-sdhci-of-k1-fix-unaligned-HOST_CONTROL2-access.patch \
+            "https://raw.githubusercontent.com/dgshue/OpenWrt-RISC/master/target/linux/spacemit/patches-6.18/0005-mmc-sdhci-of-k1-fix-unaligned-HOST_CONTROL2-access.patch"
+          curl -sL -f -o target/linux/spacemit/patches-6.18/0502-rtc-spacemit-p1-enable-crystal-and-32KOUT.patch \
+            "https://raw.githubusercontent.com/dgshue/OpenWrt-RISC/master/target/linux/spacemit/patches-6.18/0006-rtc-spacemit-p1-enable-crystal-and-32KOUT.patch"
+          echo "--- All WiFi patches now in place ---"
           ls -la target/linux/spacemit/patches-6.18/050*.patch
 
       - name: Create a dedicated firmware package for AP6256 (avoids apk ownership conflicts)
@@ -127,7 +92,7 @@ jobs:
             "brcmfmac43456-sdio.xunlong,orangepi-rv2.txt" \
             LICENSE.brcm80211
           do
-            curl -sL -o "$PKGDIR/files/$f" \
+            curl -sL -f -o "$PKGDIR/files/$f" \
               "https://raw.githubusercontent.com/dgshue/OpenWrt-RISC/master/target/linux/spacemit/base-files/lib/firmware/brcm/$f"
           done
           cat > "$PKGDIR/Makefile" << 'EOF'
@@ -147,10 +112,12 @@ jobs:
 
           define Package/brcmfmac-firmware-43456-sdio-rv2/description
             Firmware, CLM blob, and board-specific NVRAM for the AP6256
-            (BCM43456) WiFi module on the OrangePi RV2. EXPERIMENTAL, ported
-            from https://github.com/dgshue/OpenWrt-RISC for use with PR
-            #23231's spacemit/k1 target. Packaged separately (rather than via
-            a FILES= overlay) so file ownership is unambiguous to apk.
+            (BCM43456) WiFi module on the OrangePi RV2. Firmware blobs sourced
+            from https://github.com/dgshue/OpenWrt-RISC; devicetree enablement
+            is this project's own, independently verified adaptation — see
+            0500-rv2-wifi-devicetree-adapted.patch for the full verification
+            trail. Packaged separately (rather than via a FILES= overlay) so
+            file ownership is unambiguous to apk.
           endef
 
           define Build/Compile
@@ -171,7 +138,6 @@ jobs:
           EOF
           echo "--- Package created ---"
           find "$PKGDIR" -type f
-      # --- end EXPERIMENTAL additions ---
 
       - name: Configure target (spacemit/k1, generic multi-board device)
         run: |
@@ -186,8 +152,6 @@ jobs:
           CONFIG_PACKAGE_blkid=y
           CONFIG_PACKAGE_block-mount=y
           CONFIG_PACKAGE_kmod-fs-ext4=y
-          # EXPERIMENTAL: RV2 WiFi driver + supplicant (devicetree node and
-          # firmware are added separately above via patches/FILES overlay)
           CONFIG_PACKAGE_kmod-brcmfmac=y
           CONFIG_PACKAGE_wpad-openssl=y
           CONFIG_PACKAGE_iw=y
@@ -228,25 +192,22 @@ jobs:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: "OpenWrt spacemit-k1 (WiFi-patched, EXPERIMENTAL) — ${{ steps.tag.outputs.tag }}"
           body: |
-            EXPERIMENTAL — RV2 onboard WiFi (AP6256/BCM43456) enabled via
-            devicetree/kernel patches and firmware ported from the
-            independent project https://github.com/dgshue/OpenWrt-RISC
-            (not affiliated with PR #23231).
+            EXPERIMENTAL — RV2 onboard WiFi (AP6256/BCM43456).
+
+            Devicetree changes are this project's own patch, independently
+            verified against dhewg's actual current tree (not grafted from
+            another repo's file layout — an earlier attempt at that caused a
+            real SD-card boot panic). See 0500-rv2-wifi-devicetree-adapted.patch
+            for the full verification trail. The SDIO panic fix and PMIC clock
+            enable are pulled from https://github.com/dgshue/OpenWrt-RISC directly,
+            since those apply cleanly as-is and aren't board-structure-specific.
+            Firmware blobs also sourced from that project.
 
             Built from openwrt/openwrt PR #23231 (spacemit/k1 target, generic
-            device) + 3 extra WiFi patches + deferred probe fix. Source commit: ${{ github.sha }}
+            device). Source commit: ${{ github.sha }}
 
-            **What's Fixed:**
-            - ✅ Kernel panic from NULL pinctrl pointer (EPROBE_DEFER handling added)
-            - ✅ WiFi slot (sdhci1) enabled by default
-            - ✅ Will retry probe if pinctrl not initialized during early boot
-            - ✅ BCM43456 (AP6256) WiFi firmware included
-
-            This variant has been tested and boots cleanly. WiFi should be detected
-            automatically on boot. If you don't see a wlan interface, check dmesg
-            for pinctrl/mmc probe messages.
-
-            Unofficial personal build from an unmerged PR — not production firmware.
+            Structural/compile verification only — NOT yet confirmed on real
+            hardware. Unofficial personal build from an unmerged PR.
           files: |
             bin/targets/spacemit/k1/*.img.gz
             bin/targets/spacemit/k1/*.itb
