@@ -158,6 +158,7 @@ jobs:
           CONFIG_PACKAGE_block-mount=y
           CONFIG_PACKAGE_kmod-fs-ext4=y
           CONFIG_PACKAGE_kmod-brcmfmac=y
+          CONFIG_BRCMFMAC_SDIO=y
           CONFIG_PACKAGE_wpad-openssl=y
           CONFIG_PACKAGE_iw=y
           CONFIG_PACKAGE_brcmfmac-firmware-43456-sdio-rv2=y
