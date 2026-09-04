@@ -28,6 +28,7 @@
 - [First steps after flashing](#-first-steps-after-flashing)
 - [Adding packages](#-adding-packages)
 - [Expanding storage](#-expanding-storage)
+- [RV2 WiFi status](#-rv2-wifi-status)
 - [Known caveats](#-known-caveats)
 - [Disclaimer](#-disclaimer)
 
@@ -40,8 +41,8 @@ This repo holds **no OpenWrt source** — just GitHub Actions workflows that che
 | | `build-openwrt-spacemit-k1.yml` | `build-openwrt-spacemit-k1-wifi-patched.yml` |
 |---|---|---|
 | **Release tag prefix** | `build-...` | `wifi-patched-...` |
-| **Contents** | Exactly PR #23231 | PR #23231 + 3 experimental RV2 WiFi patches from [dgshue/OpenWrt-RISC](https://github.com/dgshue/OpenWrt-RISC) |
-| **Status** | Tested, working on real hardware | **Unverified** — patches may not apply cleanly against this tree (build fails loudly if so, never silently) |
+| **Contents** | Exactly PR #23231 | PR #23231 + a hand-adapted RV2 WiFi devicetree patch (`.github/patches/0500-rv2-wifi-devicetree-adapted.patch`, this project's own — see [RV2 WiFi status](#-rv2-wifi-status) below) + 2 companion fixes from [dgshue/OpenWrt-RISC](https://github.com/dgshue/OpenWrt-RISC) |
+| **Status** | Tested, working on real hardware | **Boots and associates clients on real hardware** — but has real, unresolved performance problems, see below |
 | **Use when** | Normal use, both boards | Testing RV2 onboard WiFi specifically |
 
 Both stay independently listed under Releases — the tag prefix alone tells you which is which at a glance.
@@ -259,6 +260,28 @@ uci commit fstab
 reboot
 ```
 
+## 📶 RV2 WiFi status
+
+The `wifi-patched` workflow enables the RV2's onboard AP6256 (Broadcom BCM43456) WiFi module. This is this project's own devicetree work — not `dgshue`'s patch grafted as-is (that caused a real SD-card kernel panic; see the patch file's own header for the full history). Confirmed on real hardware:
+
+**Working:**
+- Boots cleanly, no crash — SD card, eMMC, USB, PCIe all unaffected
+- `mmc2`/SDIO enumerates the chip correctly, firmware and NVRAM load, `brcmfmac` attaches
+- AP mode: associates clients, WPA2-PSK (`psk2`) works, DHCP/internet works over the connection
+- 20MHz and 40MHz (VHT40) modes both work
+
+**Confirmed hardware fact, not a bug:** this specific board's AP6256 module is wired **1x1** (single antenna, `rxchain=1`/`txchain=1` in NVRAM) — the AP6256 chip itself supports 2x2 elsewhere, but this board doesn't wire a second antenna path. This caps best-case throughput below a 2x2 setup; it isn't fixable in software.
+
+**Not working, still open:**
+- **80MHz (VHT80) doesn't connect at all** — tried on channel 36 (the correct primary for the 36–48 block) and channel 48, neither works, despite this same chip family proving VHT80 capable in STA mode on this exact SoC ([dgshue's own STATUS.md](https://github.com/dgshue/OpenWrt-RISC/blob/master/STATUS.md) documents 433Mbit/s VHT80 in client mode)
+- **Real throughput is far below expected even at 20/40MHz** — confirmed at centimeter range (ruling out distance/environment), across multiple client devices including a WiFi 6 client that reaches 600–700Mbit/s on the same network's BPi-R4 access point but only ~60–70Mbit/s here
+- **Per-station signal/RSSI reporting is broken or absent** in both `iwinfo` and `iw station dump` — a known general `brcmfmac` AP-mode limitation, not specific to this patch
+- Given `dgshue`'s own testing never covered AP-mode throughput (only STA-mode association), it's possible this project is the first to actually stress-test AP-mode performance on this hardware/driver combination — so this may be genuinely uncharted territory, not a known-fixable regression
+
+**Not yet isolated:** whether this is a driver/firmware/NVRAM configuration issue, or a hardware limitation specific to this board's WiFi module/antenna path. The next diagnostic step is comparing AP-mode throughput against STA-mode throughput (connecting the RV2 itself to another AP, mirroring `dgshue`'s proven-working scenario) to determine whether the problem is AP-mode-specific or more fundamental.
+
+If you're relying on WiFi for real throughput today, a USB WiFi dongle remains the more dependable option until this is further resolved.
+
 ## ⚠️ Known caveats
 
 | Area | Note |
@@ -269,7 +292,7 @@ reboot
 | R2S SPI NOR | Some units may lack the chip entirely — eMMC-only bootloader target on those |
 | **Root expand + NVMe** | Confirmed open OpenWrt bug bricks NVMe installs after resize — see [Expanding storage](#-expanding-storage) |
 | **Reflashing doesn't wipe the whole card/drive** | Only the first ~268MB (partitions 1–5) gets overwritten — anything created further out on a previous attempt (e.g. an old extroot partition) physically survives a reflash. `extend-storage.sh` handles this (`mkfs -F`); doing it manually needs the same flag, see [Expanding storage](#-expanding-storage) |
-| **RV2 onboard WiFi (AP6256)** | **Not enumerating at all** in the clean build — the devicetree doesn't expose it in this PR (matches OrangePi's own official images, which also reportedly lack working WiFi on RV2). Try the `wifi-patched` workflow (experimental, unverified) or a USB WiFi dongle in the meantime |
+| **RV2 onboard WiFi (AP6256)** | **Working, with real known problems under active investigation** — see [RV2 WiFi status](#-rv2-wifi-status) below for the full detail |
 | Package manager | This target builds on `apk` (25.x+), not legacy `opkg` |
 | **Live `apk add` for kmods/target packages** | Will always fail while unmerged — `downloads.openwrt.org` only publishes a target-specific package feed for merged targets, and this PR isn't one. Anything kernel/target-specific (`kmod-*`, `block-mount`, etc.) must be baked into the `.config` and rebuilt; only arch-generic userspace packages (like `luci`) install live |
 | Reproducibility | PR #23231 is force-pushed regularly — pin a commit SHA via the `pin_commit` workflow input for a build you can reproduce later |
